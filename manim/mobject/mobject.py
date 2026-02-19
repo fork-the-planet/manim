@@ -17,7 +17,7 @@ import warnings
 from collections.abc import Callable, Iterable
 from functools import partialmethod, reduce
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -394,6 +394,42 @@ class Mobject:
         """
         return _AnimationBuilder(self)
 
+    @property
+    def always(self) -> Self:
+        """Call a method on a mobject every frame.
+
+        This is syntactic sugar for ``mob.add_updater(lambda m: m.method(*args, **kwargs), call_updater=True)``.
+        Note that this will call the method immediately. If this behavior is not
+        desired, you should use :meth:`add_updater` directly.
+
+        .. warning::
+
+            Chaining of methods is allowed, but each method will be added
+            as its own updater. If you are chaining methods, make sure they
+            do not interfere with each other or you may get unexpected results.
+
+        .. warning::
+
+            :attr:`always` is not compatible with :meth:`.ValueTracker.get_value`, because
+            the value will be computed once and then never updated again. Use :meth:`add_updater`
+            if you would like to use a :class:`~.ValueTracker` to update the value.
+
+        Example
+        -------
+
+            .. manim:: AlwaysExample
+
+                class AlwaysExample(Scene):
+                    def construct(self):
+                        sq = Square().to_edge(LEFT)
+                        t = Text("Hello World!")
+                        t.always.next_to(sq, UP)
+                        self.add(sq, t)
+                        self.play(sq.animate.to_edge(RIGHT))
+        """
+        # can't use typing.cast because Self is under TYPE_CHECKING
+        return _UpdaterBuilder(self)  # type: ignore[return-value]
+
     def __deepcopy__(self, clone_from_id) -> Self:
         cls = self.__class__
         result = cls.__new__(cls)
@@ -406,9 +442,10 @@ class Mobject:
     def __repr__(self) -> str:
         return str(self.name)
 
-    def reset_points(self) -> None:
+    def reset_points(self) -> Self:
         """Sets :attr:`points` to be an empty array."""
         self.points = np.zeros((0, self.dim))
+        return self
 
     def init_colors(self) -> object:
         """Initializes the colors.
@@ -815,7 +852,7 @@ class Mobject:
         self.scale_to_fit_depth(value)
 
     # Can't be staticmethod because of point_cloud_mobject.py
-    def get_array_attrs(self) -> list[Literal["points"]]:
+    def get_array_attrs(self) -> list[str]:
         return ["points"]
 
     def apply_over_attr_arrays(self, func: MultiMappingFunction) -> Self:
@@ -3337,6 +3374,24 @@ class _AnimationBuilder:
             setattr(anim, attr, value)
 
         return anim
+
+
+class _UpdaterBuilder:
+    """Syntactic sugar for adding updaters to mobjects."""
+
+    def __init__(self, mobject: Mobject):
+        self._mobject = mobject
+
+    def __getattr__(self, name: str, /) -> Callable[..., Self]:
+        # just return a function that will add the updater
+        def add_updater(*method_args, **method_kwargs) -> Self:
+            self._mobject.add_updater(
+                lambda m: getattr(m, name)(*method_args, **method_kwargs),
+                call_updater=True,
+            )
+            return self
+
+        return add_updater
 
 
 def override_animate(method) -> types.FunctionType:
